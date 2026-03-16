@@ -53,11 +53,18 @@ namespace ClipWebcamDetection
                 {
                     Mat crop = new Mat(frame, box);
 
-                    string label = ClipClient.Predict(crop);
+                    string predictedLabel = ClipClient.Predict(crop);
 
-                    Metadata.Save(crop, label);
+                    Console.WriteLine("Predicted: " + predictedLabel);
+                    Console.Write("Enter a new label to add (or press Enter to skip): ");
+                    string newLabel = Console.ReadLine()?.Trim();
 
-                    Console.WriteLine("Saved: " + label);
+                    if (!string.IsNullOrEmpty(newLabel))
+                    {
+                        ClipClient.AddNewLabel(newLabel, crop, "text_embeddings.json");
+                    }
+
+                    Metadata.Save(crop, predictedLabel);
 
                     box = new Rect();
                 }
@@ -96,51 +103,73 @@ namespace ClipWebcamDetection
         public static void Save(Mat img, string label)
         {
             string folder = Path.Combine(root, label);
-
             Directory.CreateDirectory(folder);
 
-            string file =
-                Path.Combine(folder,
-                DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".png");
-
+            string file = Path.Combine(folder, DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".png");
             Cv2.ImWrite(file, img);
 
             string meta = Path.Combine(root, "metadata.json");
-
             File.AppendAllText(meta, file + "|" + label + Environment.NewLine);
         }
     }
 
-    // Structure of the JSON file
     class ClipEmbeddingFile
     {
         public List<string> labels { get; set; }
+        // Text embeddings aligned by index with labels (may be null if not available)
         public List<float[]> embeddings { get; set; }
+        // Per-label list of saved image embeddings (can be empty lists)
+        public List<List<float[]>> image_embeddings { get; set; }
     }
 
     static class ClipClient
     {
         static InferenceSession session;
-
         static List<string> labels = new List<string>();
-
+        // text embeddings aligned by index with labels. Entries may be null if not present.
         static List<float[]> textEmbeddings = new List<float[]>();
-
+        // per-label image embeddings
+        static List<List<float[]>> imageEmbeddings = new List<List<float[]>>();
         static int imageSize = 224;
 
         public static void Initialize(string modelPath, string embeddingsPath)
         {
-            // Load ONNX model
             session = new InferenceSession(modelPath);
 
-            // Load JSON
-            var json = File.ReadAllText(embeddingsPath);
+            ClipEmbeddingFile data = null;
+            if (File.Exists(embeddingsPath))
+            {
+                var json = File.ReadAllText(embeddingsPath);
+                data = JsonSerializer.Deserialize<ClipEmbeddingFile>(json);
+            }
 
-            var data = JsonSerializer.Deserialize<ClipEmbeddingFile>(json);
+            if (data != null)
+            {
+                labels = data.labels ?? new List<string>();
+                textEmbeddings = data.embeddings ?? new List<float[]>();
 
-            labels = data.labels;
+                // Ensure image_embeddings exists and aligns with labels
+                if (data.image_embeddings == null)
+                    data.image_embeddings = new List<List<float[]>>();
 
-            textEmbeddings = data.embeddings;
+                // Pad image_embeddings to match labels count
+                while (data.image_embeddings.Count < labels.Count)
+                    data.image_embeddings.Add(new List<float[]>());
+
+                imageEmbeddings = data.image_embeddings;
+            }
+            else
+            {
+                labels = new List<string>();
+                textEmbeddings = new List<float[]>();
+                imageEmbeddings = new List<List<float[]>>();
+            }
+
+            // Ensure lists align in length
+            while (textEmbeddings.Count < labels.Count)
+                textEmbeddings.Add(null);
+            while (imageEmbeddings.Count < labels.Count)
+                imageEmbeddings.Add(new List<float[]>());
 
             Console.WriteLine($"Loaded {labels.Count} labels and embeddings.");
         }
@@ -149,27 +178,93 @@ namespace ClipWebcamDetection
         {
             float[] imageEmbedding = EncodeImage(image);
 
-            // Validate embedding dimension
-            if (textEmbeddings.Count > 0 && imageEmbedding.Length != textEmbeddings[0].Length)
-                throw new InvalidOperationException($"Embedding size mismatch: image {imageEmbedding.Length} vs text {textEmbeddings[0].Length}");
-
+            // Iterate over labels (not textEmbeddings count) and compute best score per label
             float bestScore = float.MinValue;
             int bestIndex = 0;
 
-            for (int i = 0; i < textEmbeddings.Count; i++)
+            for (int i = 0; i < labels.Count; i++)
             {
-                float score = CosineSimilarity(imageEmbedding, textEmbeddings[i]);
+                float bestForLabel = float.MinValue;
+                bool anyCompared = false;
 
-                if (score > bestScore)
+                // Compare against text embedding if present and same length
+                if (i < textEmbeddings.Count && textEmbeddings[i] != null && textEmbeddings[i].Length == imageEmbedding.Length)
                 {
-                    bestScore = score;
+                    anyCompared = true;
+                    float score = CosineSimilarity(imageEmbedding, textEmbeddings[i]);
+                    if (score > bestForLabel) bestForLabel = score;
+                }
+
+                // Compare against any saved image embeddings for this label
+                if (i < imageEmbeddings.Count && imageEmbeddings[i] != null)
+                {
+                    foreach (var ie in imageEmbeddings[i])
+                    {
+                        if (ie != null && ie.Length == imageEmbedding.Length)
+                        {
+                            anyCompared = true;
+                            float score = CosineSimilarity(imageEmbedding, ie);
+                            if (score > bestForLabel) bestForLabel = score;
+                        }
+                    }
+                }
+
+                // If no comparable embeddings for this label (length mismatch), skip it
+                if (!anyCompared) continue;
+
+                if (bestForLabel > bestScore)
+                {
+                    bestScore = bestForLabel;
                     bestIndex = i;
                 }
             }
 
-            Console.WriteLine($"Confidence: {bestScore:F3}");
+            if (labels.Count == 0)
+                return "unknown";
 
+            Console.WriteLine($"Confidence: {bestScore:F3}");
             return labels[bestIndex];
+        }
+
+        public static void AddNewLabel(string label, Mat image, string embeddingsPath)
+        {
+            if (string.IsNullOrWhiteSpace(label)) return;
+
+            // Ensure lists align
+            int idx = labels.IndexOf(label);
+            float[] embedding = EncodeImage(image);
+
+            if (idx >= 0)
+            {
+                // add image embedding to existing label
+                if (idx >= imageEmbeddings.Count) imageEmbeddings.Add(new List<float[]>());
+                imageEmbeddings[idx].Add(embedding);
+            }
+            else
+            {
+                // new label: append label, ensure arrays stay aligned
+                labels.Add(label);
+
+                // keep text embedding list aligned (no text embedding provided)
+                textEmbeddings.Add(null);
+
+                // add image embedding list for this new label
+                var list = new List<float[]> { embedding };
+                imageEmbeddings.Add(list);
+            }
+
+            // save back to JSON
+            var data = new ClipEmbeddingFile
+            {
+                labels = labels,
+                embeddings = textEmbeddings,
+                image_embeddings = imageEmbeddings
+            };
+
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            File.WriteAllText(embeddingsPath, JsonSerializer.Serialize(data, options));
+
+            Console.WriteLine($"Saved embedding for label '{label}' to {embeddingsPath}");
         }
 
         // Safer CosineSimilarity (throws on length mismatch)
@@ -188,21 +283,19 @@ namespace ClipWebcamDetection
 
         static float[] EncodeImage(Mat image)
         {
-            // Resize & normalize
             Mat resized = new Mat();
             Cv2.Resize(image, resized, new OpenCvSharp.Size(imageSize, imageSize));
             resized.ConvertTo(resized, MatType.CV_32FC3, 1.0 / 255);
 
-            // Prepare tensor [1,3,H,W]
             var tensor = new DenseTensor<float>(new[] { 1, 3, imageSize, imageSize });
             for (int y = 0; y < imageSize; y++)
             {
                 for (int x = 0; x < imageSize; x++)
                 {
                     Vec3f pixel = resized.At<Vec3f>(y, x);
-                    tensor[0, 0, y, x] = pixel.Item2; // R
-                    tensor[0, 1, y, x] = pixel.Item1; // G
-                    tensor[0, 2, y, x] = pixel.Item0; // B
+                    tensor[0, 0, y, x] = pixel.Item2;
+                    tensor[0, 1, y, x] = pixel.Item1;
+                    tensor[0, 2, y, x] = pixel.Item0;
                 }
             }
 
@@ -213,9 +306,24 @@ namespace ClipWebcamDetection
 
             using var results = session.Run(inputs);
 
-            int expected = textEmbeddings.Count > 0 ? textEmbeddings[0].Length : 512;
+            // Determine expected length from existing embeddings if possible:
+            int expected = -1;
+            // prefer a non-null text embedding length
+            var te = textEmbeddings.FirstOrDefault(e => e != null);
+            if (te != null) expected = te.Length;
+            else
+            {
+                // fallback to any existing saved image embedding
+                foreach (var list in imageEmbeddings)
+                {
+                    var ie = list?.FirstOrDefault(e => e != null);
+                    if (ie != null) { expected = ie.Length; break; }
+                }
+            }
+            // if still unknown, default to 512 (legacy behavior)
+            if (expected <= 0) expected = 512;
 
-            // Pick output whose length matches text embedding
+            // Pick output whose length matches expected embedding length
             foreach (var r in results)
             {
                 var t = r.AsTensor<float>();
