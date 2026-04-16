@@ -6,6 +6,7 @@ using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using OpenCvSharp;
 using System.Text.Json;
+using System.Net;
 
 namespace ClipWebcamDetection
 {
@@ -17,6 +18,9 @@ namespace ClipWebcamDetection
 
         static void Main(string[] args)
         {
+            // 🔽 ADD THIS (ensures .data file exists next to model)
+            ModelDownloader.EnsureDataFileForModel("Models/clip_image_encoder.onnx");
+
             // Load CLIP model + embeddings + labels from JSON
             ClipClient.Initialize("Models/clip_image_encoder.onnx", "text_embeddings.json");
 
@@ -96,6 +100,65 @@ namespace ClipWebcamDetection
         }
     }
 
+    // =========================
+    // 🔽 DOWNLOADER ADDED
+    // =========================
+    static class ModelDownloader
+    {
+        public static void EnsureDataFileForModel(string modelPath)
+        {
+            string modelDir = Path.GetDirectoryName(modelPath)!;
+            string dataPath = Path.Combine(modelDir, "clip_image_encoder.onnx.data");
+            string tempPath = dataPath + ".tmp";
+
+            string dataUrl = "https://github.com/NegativeSolution/LearningWebcamThesisProject/releases/download/v1.0/clip_image_encoder.onnx.data";
+
+            if (File.Exists(dataPath))
+            {
+                long size = new FileInfo(dataPath).Length;
+                if (size < 10_000_000)
+                {
+                    Console.WriteLine("Corrupted .data file detected. Redownloading...");
+                    File.Delete(dataPath);
+                }
+            }
+
+            if (!File.Exists(dataPath))
+            {
+                Console.WriteLine($"Downloading .onnx.data to: {modelDir}");
+
+                try
+                {
+                    using (WebClient client = new WebClient())
+                    {
+                        client.DownloadProgressChanged += (s, e) =>
+                        {
+                            Console.Write($"\rProgress: {e.ProgressPercentage}%   ");
+                        };
+
+                        client.DownloadFile(dataUrl, tempPath);
+                    }
+
+                    File.Move(tempPath, dataPath, true);
+                    Console.WriteLine("\nDownload complete.");
+                }
+                catch (Exception ex)
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+
+                    Console.WriteLine("\nDownload failed:");
+                    Console.WriteLine(ex.Message);
+                    Environment.Exit(1);
+                }
+            }
+            else
+            {
+                Console.WriteLine(".onnx.data already present.");
+            }
+        }
+    }
+
     static class Metadata
     {
         static string root = "ImageBank";
@@ -116,9 +179,7 @@ namespace ClipWebcamDetection
     class ClipEmbeddingFile
     {
         public List<string> labels { get; set; }
-        // Text embeddings aligned by index with labels (may be null if not available)
         public List<float[]> embeddings { get; set; }
-        // Per-label list of saved image embeddings (can be empty lists)
         public List<List<float[]>> image_embeddings { get; set; }
     }
 
@@ -126,9 +187,7 @@ namespace ClipWebcamDetection
     {
         static InferenceSession session;
         static List<string> labels = new List<string>();
-        // text embeddings aligned by index with labels. Entries may be null if not present.
         static List<float[]> textEmbeddings = new List<float[]>();
-        // per-label image embeddings
         static List<List<float[]>> imageEmbeddings = new List<List<float[]>>();
         static int imageSize = 224;
 
@@ -148,11 +207,9 @@ namespace ClipWebcamDetection
                 labels = data.labels ?? new List<string>();
                 textEmbeddings = data.embeddings ?? new List<float[]>();
 
-                // Ensure image_embeddings exists and aligns with labels
                 if (data.image_embeddings == null)
                     data.image_embeddings = new List<List<float[]>>();
 
-                // Pad image_embeddings to match labels count
                 while (data.image_embeddings.Count < labels.Count)
                     data.image_embeddings.Add(new List<float[]>());
 
@@ -165,7 +222,6 @@ namespace ClipWebcamDetection
                 imageEmbeddings = new List<List<float[]>>();
             }
 
-            // Ensure lists align in length
             while (textEmbeddings.Count < labels.Count)
                 textEmbeddings.Add(null);
             while (imageEmbeddings.Count < labels.Count)
@@ -178,7 +234,6 @@ namespace ClipWebcamDetection
         {
             float[] imageEmbedding = EncodeImage(image);
 
-            // Iterate over labels (not textEmbeddings count) and compute best score per label
             float bestScore = float.MinValue;
             int bestIndex = 0;
 
@@ -187,7 +242,6 @@ namespace ClipWebcamDetection
                 float bestForLabel = float.MinValue;
                 bool anyCompared = false;
 
-                // Compare against text embedding if present and same length
                 if (i < textEmbeddings.Count && textEmbeddings[i] != null && textEmbeddings[i].Length == imageEmbedding.Length)
                 {
                     anyCompared = true;
@@ -195,7 +249,6 @@ namespace ClipWebcamDetection
                     if (score > bestForLabel) bestForLabel = score;
                 }
 
-                // Compare against any saved image embeddings for this label
                 if (i < imageEmbeddings.Count && imageEmbeddings[i] != null)
                 {
                     foreach (var ie in imageEmbeddings[i])
@@ -209,7 +262,6 @@ namespace ClipWebcamDetection
                     }
                 }
 
-                // If no comparable embeddings for this label (length mismatch), skip it
                 if (!anyCompared) continue;
 
                 if (bestForLabel > bestScore)
@@ -230,30 +282,22 @@ namespace ClipWebcamDetection
         {
             if (string.IsNullOrWhiteSpace(label)) return;
 
-            // Ensure lists align
             int idx = labels.IndexOf(label);
             float[] embedding = EncodeImage(image);
 
             if (idx >= 0)
             {
-                // add image embedding to existing label
                 if (idx >= imageEmbeddings.Count) imageEmbeddings.Add(new List<float[]>());
                 imageEmbeddings[idx].Add(embedding);
             }
             else
             {
-                // new label: append label, ensure arrays stay aligned
                 labels.Add(label);
-
-                // keep text embedding list aligned (no text embedding provided)
                 textEmbeddings.Add(null);
-
-                // add image embedding list for this new label
                 var list = new List<float[]> { embedding };
                 imageEmbeddings.Add(list);
             }
 
-            // save back to JSON
             var data = new ClipEmbeddingFile
             {
                 labels = labels,
@@ -267,7 +311,6 @@ namespace ClipWebcamDetection
             Console.WriteLine($"Saved embedding for label '{label}' to {embeddingsPath}");
         }
 
-        // Safer CosineSimilarity (throws on length mismatch)
         static float CosineSimilarity(float[] a, float[] b)
         {
             if (a.Length != b.Length) throw new ArgumentException($"Embedding length mismatch: {a.Length} != {b.Length}");
@@ -306,24 +349,19 @@ namespace ClipWebcamDetection
 
             using var results = session.Run(inputs);
 
-            // Determine expected length from existing embeddings if possible:
             int expected = -1;
-            // prefer a non-null text embedding length
             var te = textEmbeddings.FirstOrDefault(e => e != null);
             if (te != null) expected = te.Length;
             else
             {
-                // fallback to any existing saved image embedding
                 foreach (var list in imageEmbeddings)
                 {
                     var ie = list?.FirstOrDefault(e => e != null);
                     if (ie != null) { expected = ie.Length; break; }
                 }
             }
-            // if still unknown, default to 512 (legacy behavior)
             if (expected <= 0) expected = 512;
 
-            // Pick output whose length matches expected embedding length
             foreach (var r in results)
             {
                 var t = r.AsTensor<float>();
@@ -331,7 +369,6 @@ namespace ClipWebcamDetection
                     return t.ToArray();
             }
 
-            // If none found, throw clear exception with available outputs
             string available = string.Join(", ", results.Select(r => $"{r.Name}:{r.AsTensor<float>().Length}"));
             throw new InvalidOperationException($"Could not find model output with length {expected}. Available outputs: {available}");
         }
