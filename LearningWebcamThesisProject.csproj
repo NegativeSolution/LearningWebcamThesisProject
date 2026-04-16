@@ -15,4 +15,13 @@
     <PackageReference Include="System.Numerics.Tensors" Version="10.0.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Models\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>
