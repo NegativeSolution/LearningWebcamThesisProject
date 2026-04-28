@@ -22,6 +22,174 @@ This repository includes everything needed to:
 * Generate new AI label embeddings
 * Store and organize captured images
 
+# How to Run the Project
+
+Follow these steps.
+
+---
+
+# Step 1 Install Required Software
+
+Install Visual Studio and select the workload:
+
+.NET Desktop Development
+
+---
+
+Install Python and ensure the option
+
+Add Python to PATH
+
+is enabled.
+
+Python is only required if you want to regenerate text embeddings.
+
+---
+
+# Step 2 Download the Repository
+
+Clone the repository using Git:
+
+git clone https://github.com/NegativeSolution/LearningWebcamThesisProject.git
+
+Or download the ZIP file from GitHub and extract it.
+
+---
+
+# Step 3 Open the Project
+
+1. Launch Visual Studio
+2. Click Open a project or solution
+3. Select
+
+LearningWebcamThesisProject.slnx
+
+---
+
+# Step 4 Restore Dependencies
+
+Visual Studio will automatically download required libraries from NuGet.
+
+These include:
+
+OpenCvSharp
+Microsoft.ML.OnnxRuntime
+System.Numerics.Tensors
+
+If necessary you can manually run:
+
+Build -> Restore NuGet Packages
+
+---
+
+# Step 5 Build the Program
+
+Compile the program by selecting:
+
+Build -> Build Solution
+
+or pressing:
+
+Ctrl + Shift + B
+
+---
+
+# Step 6 Run the Application
+
+Press:
+
+F5
+
+or select:
+
+Start Debugging
+
+Your webcam window should appear.
+
+---
+
+# How to Use the Program
+
+Once the webcam window opens:
+
+Step 1
+Move your mouse over an object.
+
+Step 2
+Click and drag to draw a bounding box around the object.
+
+Step 3
+Press the Spacebar.
+
+The AI will:
+
+1. Analyze the object
+2. Compare it with all label embeddings
+3. Select the most similar label
+4. Save the image
+
+Example console output:
+
+Confidence: 0.87
+Saved: a photo of a white ceramic mug
+
+---
+
+# Expanding the Object Vocabulary
+
+You can add new recognizable objects.
+
+Step 1
+Edit:
+
+Data/labels.txt
+
+Add descriptions such as:
+
+a photo of a bicycle
+a photo of a keyboard
+a photo of a backpack
+
+---
+
+Step 2
+Regenerate embeddings:
+
+python Scripts/generate_embeddings.py
+
+---
+
+Step 3
+Rebuild the project.
+
+The system will now recognize the new objects.
+
+---
+
+# Troubleshooting
+
+Webcam does not open
+
+Check that no other application is using the camera and that your device has a working webcam.
+
+---
+
+Model file not found
+
+Verify that the file exists:
+
+Models/clip_image_encoder.onnx
+
+---
+
+Embedding size mismatch
+
+This occurs if embeddings were generated with a different model.
+
+Regenerate embeddings using the provided script.
+
+
+
 ---
 
 # How the Program Works (Simple Explanation)
@@ -190,174 +358,6 @@ You only need to run it if:
 * the vocabulary expands
 
 Once embeddings are generated, Python is no longer required to run the application.
-
----
-
-# How to Run the Project
-
-Follow these steps.
-
----
-
-# Step 1 Install Required Software
-
-Install Visual Studio and select the workload:
-
-.NET Desktop Development
-
----
-
-Install Python and ensure the option
-
-Add Python to PATH
-
-is enabled.
-
-Python is only required if you want to regenerate text embeddings.
-
----
-
-# Step 2 Download the Repository
-
-Clone the repository using Git:
-
-git clone https://github.com/NegativeSolution/LearningWebcamThesisProject.git
-
-Or download the ZIP file from GitHub and extract it.
-
----
-
-# Step 3 Open the Project
-
-1. Launch Visual Studio
-2. Click Open a project or solution
-3. Select
-
-LearningWebcamThesisProject.slnx
-
----
-
-# Step 4 Restore Dependencies
-
-Visual Studio will automatically download required libraries from NuGet.
-
-These include:
-
-OpenCvSharp
-Microsoft.ML.OnnxRuntime
-System.Numerics.Tensors
-
-If necessary you can manually run:
-
-Build -> Restore NuGet Packages
-
----
-
-# Step 5 Build the Program
-
-Compile the program by selecting:
-
-Build -> Build Solution
-
-or pressing:
-
-Ctrl + Shift + B
-
----
-
-# Step 6 Run the Application
-
-Press:
-
-F5
-
-or select:
-
-Start Debugging
-
-Your webcam window should appear.
-
----
-
-# How to Use the Program
-
-Once the webcam window opens:
-
-Step 1
-Move your mouse over an object.
-
-Step 2
-Click and drag to draw a bounding box around the object.
-
-Step 3
-Press the Spacebar.
-
-The AI will:
-
-1. Analyze the object
-2. Compare it with all label embeddings
-3. Select the most similar label
-4. Save the image
-
-Example console output:
-
-Confidence: 0.87
-Saved: a photo of a white ceramic mug
-
----
-
-# Expanding the Object Vocabulary
-
-You can add new recognizable objects.
-
-Step 1
-Edit:
-
-Data/labels.txt
-
-Add descriptions such as:
-
-a photo of a bicycle
-a photo of a keyboard
-a photo of a backpack
-
----
-
-Step 2
-Regenerate embeddings:
-
-python Scripts/generate_embeddings.py
-
----
-
-Step 3
-Rebuild the project.
-
-The system will now recognize the new objects.
-
----
-
-# Troubleshooting
-
-Webcam does not open
-
-Check that no other application is using the camera and that your device has a working webcam.
-
----
-
-Model file not found
-
-Verify that the file exists:
-
-Models/clip_image_encoder.onnx
-
----
-
-Embedding size mismatch
-
-This occurs if embeddings were generated with a different model.
-
-Regenerate embeddings using the provided script.
 
 ---
 
